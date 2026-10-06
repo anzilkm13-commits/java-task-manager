@@ -18,6 +18,7 @@ pipeline {
         stage('Checkout') {
             steps {
                 echo 'Checking out source code...'
+
                 checkout scm
             }
         }
@@ -28,6 +29,7 @@ pipeline {
         // =========================================================
         stage('Verify Tools') {
             steps {
+
                 sh '''
                     echo "======================================"
                     echo "JAVA VERSION"
@@ -63,6 +65,7 @@ pipeline {
         // =========================================================
         stage('Clean') {
             steps {
+
                 echo 'Cleaning previous Maven build...'
 
                 sh '''
@@ -77,6 +80,7 @@ pipeline {
         // =========================================================
         stage('Compile') {
             steps {
+
                 echo 'Compiling Java application...'
 
                 sh '''
@@ -91,6 +95,7 @@ pipeline {
         // =========================================================
         stage('Test') {
             steps {
+
                 echo 'Running unit tests...'
 
                 sh '''
@@ -105,7 +110,8 @@ pipeline {
         // =========================================================
         stage('Trivy Filesystem Scan') {
             steps {
-                echo 'Scanning source code and project files with Trivy...'
+
+                echo 'Scanning project files with Trivy...'
 
                 sh '''
                     trivy fs \
@@ -122,7 +128,8 @@ pipeline {
         // =========================================================
         stage('SonarQube Analysis') {
             steps {
-                echo 'Running SonarQube code quality analysis...'
+
+                echo 'Running SonarQube analysis...'
 
                 withSonarQubeEnv('SonarQube') {
 
@@ -163,6 +170,7 @@ pipeline {
         // =========================================================
         stage('Package') {
             steps {
+
                 echo 'Packaging Spring Boot application...'
 
                 sh '''
@@ -173,10 +181,55 @@ pipeline {
 
 
         // =========================================================
-        // 10. PUBLISH JAR TO NEXUS
+        // 10. TEST NEXUS AUTHENTICATION
+        // =========================================================
+        stage('Test Nexus Authentication') {
+            steps {
+
+                echo 'Testing Jenkins -> Nexus authentication...'
+
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'nexus-credentials',
+                        usernameVariable: 'NEXUS_USERNAME',
+                        passwordVariable: 'NEXUS_PASSWORD'
+                    )
+                ]) {
+
+                    sh '''
+                        echo "Nexus username received: ${NEXUS_USERNAME}"
+
+                        HTTP_CODE=$(curl -s \
+                            -o /dev/null \
+                            -w "%{http_code}" \
+                            -u "${NEXUS_USERNAME}:${NEXUS_PASSWORD}" \
+                            "${NEXUS_URL}/service/rest/v1/status")
+
+                        echo "Nexus authentication HTTP status: ${HTTP_CODE}"
+
+                        if [ "$HTTP_CODE" != "200" ]; then
+                            echo "======================================"
+                            echo "NEXUS AUTHENTICATION FAILED"
+                            echo "======================================"
+                            echo "HTTP status: ${HTTP_CODE}"
+                            echo "Check the Jenkins credential:"
+                            echo "nexus-credentials"
+                            exit 1
+                        fi
+
+                        echo "======================================"
+                        echo "NEXUS AUTHENTICATION SUCCESSFUL"
+                        echo "======================================"
+                    '''
+                }
+            }
+        }
+
+
+        // =========================================================
+        // 11. PUBLISH TO NEXUS
         // =========================================================
         stage('Publish to Nexus') {
-
             steps {
 
                 echo 'Uploading JAR to Nexus Repository...'
@@ -204,6 +257,10 @@ pipeline {
 </settings>
 EOF
 
+                        echo "Checking generated artifact..."
+
+                        ls -lh target/
+
                         echo "Uploading artifact to Nexus..."
 
                         ./mvnw deploy:deploy-file \
@@ -226,7 +283,7 @@ EOF
 
 
         // =========================================================
-        // 11. DOCKER BUILD
+        // 12. DOCKER BUILD
         // =========================================================
         stage('Docker Build') {
             steps {
@@ -242,12 +299,12 @@ EOF
 
 
         // =========================================================
-        // 12. TRIVY DOCKER IMAGE SCAN
+        // 13. TRIVY DOCKER IMAGE SCAN
         // =========================================================
         stage('Trivy Image Scan') {
             steps {
 
-                echo 'Scanning Docker image for HIGH and CRITICAL vulnerabilities...'
+                echo 'Scanning Docker image for vulnerabilities...'
 
                 sh '''
                     trivy image \

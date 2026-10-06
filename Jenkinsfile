@@ -8,6 +8,10 @@ pipeline {
 
         NEXUS_URL = 'http://172.31.13.19:8081'
         NEXUS_REPOSITORY = 'maven-snapshots'
+
+        GROUP_ID = 'com.example'
+        ARTIFACT_ID = 'spring-boot-todo-applicationx'
+        APP_VERSION = '0.0.1-SNAPSHOT'
     }
 
     stages {
@@ -197,8 +201,6 @@ pipeline {
                 ]) {
 
                     sh '''
-                        echo "Nexus username received: ${NEXUS_USERNAME}"
-
                         HTTP_CODE=$(curl -s \
                             -o /dev/null \
                             -w "%{http_code}" \
@@ -208,18 +210,11 @@ pipeline {
                         echo "Nexus authentication HTTP status: ${HTTP_CODE}"
 
                         if [ "$HTTP_CODE" != "200" ]; then
-                            echo "======================================"
-                            echo "NEXUS AUTHENTICATION FAILED"
-                            echo "======================================"
-                            echo "HTTP status: ${HTTP_CODE}"
-                            echo "Check the Jenkins credential:"
-                            echo "nexus-credentials"
+                            echo "Nexus authentication failed."
                             exit 1
                         fi
 
-                        echo "======================================"
-                        echo "NEXUS AUTHENTICATION SUCCESSFUL"
-                        echo "======================================"
+                        echo "Nexus authentication successful."
                     '''
                 }
             }
@@ -227,12 +222,12 @@ pipeline {
 
 
         // =========================================================
-        // 11. PUBLISH TO NEXUS
+        // 11. PUBLISH JAR TO NEXUS
         // =========================================================
         stage('Publish to Nexus') {
             steps {
 
-                echo 'Uploading JAR to Nexus Repository...'
+                echo 'Publishing Maven artifact to Nexus...'
 
                 withCredentials([
                     usernamePassword(
@@ -243,39 +238,33 @@ pipeline {
                 ]) {
 
                     sh '''
-                        echo "Creating temporary Maven settings..."
+                        set -e
 
-                        cat > nexus-settings.xml <<EOF
-<settings>
-    <servers>
-        <server>
-            <id>nexus</id>
-            <username>${NEXUS_USERNAME}</username>
-            <password>${NEXUS_PASSWORD}</password>
-        </server>
-    </servers>
-</settings>
-EOF
+                        echo "Preparing Maven repository path..."
 
-                        echo "Checking generated artifact..."
+                        GROUP_PATH=$(echo "${GROUP_ID}" | tr '.' '/')
 
-                        ls -lh target/
+                        ARTIFACT_FILE="target/${ARTIFACT_ID}-${APP_VERSION}.jar"
 
-                        echo "Uploading artifact to Nexus..."
+                        ARTIFACT_URL="${NEXUS_URL}/repository/${NEXUS_REPOSITORY}/${GROUP_PATH}/${ARTIFACT_ID}/${APP_VERSION}/${ARTIFACT_ID}-${APP_VERSION}.jar"
 
-                        ./mvnw deploy:deploy-file \
-                            -DgroupId=com.example \
-                            -DartifactId=spring-boot-todo-applicationx \
-                            -Dversion=0.0.1-SNAPSHOT \
-                            -Dpackaging=jar \
-                            -Dfile=target/spring-boot-todo-applicationx-0.0.1-SNAPSHOT.jar \
-                            -DrepositoryId=nexus \
-                            -Durl=${NEXUS_URL}/repository/${NEXUS_REPOSITORY}/ \
-                            -Dsettings=nexus-settings.xml
+                        echo "Artifact:"
+                        echo "${ARTIFACT_FILE}"
 
-                        echo "Removing temporary Maven settings..."
+                        echo "Repository path:"
+                        echo "${GROUP_PATH}/${ARTIFACT_ID}/${APP_VERSION}/"
 
-                        rm -f nexus-settings.xml
+                        echo "Uploading JAR to Nexus..."
+
+                        curl -f \
+                            -u "${NEXUS_USERNAME}:${NEXUS_PASSWORD}" \
+                            --upload-file "${ARTIFACT_FILE}" \
+                            "${ARTIFACT_URL}"
+
+                        echo ""
+                        echo "======================================"
+                        echo "NEXUS JAR UPLOAD SUCCESSFUL"
+                        echo "======================================"
                     '''
                 }
             }

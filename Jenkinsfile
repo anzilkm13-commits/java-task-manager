@@ -6,71 +6,52 @@ pipeline {
         APP_NAME = 'java-task-manager'
         APP_PORT = '8081'
 
+        // Nexus
         NEXUS_URL = 'http://172.31.13.19:8081'
         NEXUS_REPOSITORY = 'maven-snapshots'
 
+        // Maven coordinates
         GROUP_ID = 'com.example'
         ARTIFACT_ID = 'spring-boot-todo-applicationx'
         APP_VERSION = '0.0.1-SNAPSHOT'
+
+        // Docker Hub
+        DOCKER_IMAGE = 'anzilkm/java-task-manager:1.0'
     }
 
     stages {
 
-        // =========================================================
-        // 1. CHECKOUT
-        // =========================================================
         stage('Checkout') {
             steps {
                 echo 'Checking out source code...'
-
                 checkout scm
             }
         }
 
-
-        // =========================================================
-        // 2. VERIFY TOOLS
-        // =========================================================
         stage('Verify Tools') {
             steps {
-
                 sh '''
-                    echo "======================================"
-                    echo "JAVA VERSION"
-                    echo "======================================"
-                    java --version
+                    echo "===== Java ====="
+                    java -version
 
-                    echo "======================================"
-                    echo "MAVEN VERSION"
-                    echo "======================================"
-                    ./mvnw --version
+                    echo "===== Maven ====="
+                    ./mvnw -version
 
-                    echo "======================================"
-                    echo "GIT VERSION"
-                    echo "======================================"
+                    echo "===== Git ====="
                     git --version
 
-                    echo "======================================"
-                    echo "DOCKER VERSION"
-                    echo "======================================"
+                    echo "===== Docker ====="
                     docker --version
 
-                    echo "======================================"
-                    echo "TRIVY VERSION"
-                    echo "======================================"
+                    echo "===== Trivy ====="
                     trivy --version
                 '''
             }
         }
 
-
-        // =========================================================
-        // 3. CLEAN
-        // =========================================================
         stage('Clean') {
             steps {
-
-                echo 'Cleaning previous Maven build...'
+                echo 'Cleaning previous build files...'
 
                 sh '''
                     ./mvnw clean
@@ -78,14 +59,9 @@ pipeline {
             }
         }
 
-
-        // =========================================================
-        // 4. COMPILE
-        // =========================================================
         stage('Compile') {
             steps {
-
-                echo 'Compiling Java application...'
+                echo 'Compiling application...'
 
                 sh '''
                     ./mvnw compile
@@ -93,13 +69,8 @@ pipeline {
             }
         }
 
-
-        // =========================================================
-        // 5. TEST
-        // =========================================================
         stage('Test') {
             steps {
-
                 echo 'Running unit tests...'
 
                 sh '''
@@ -108,14 +79,9 @@ pipeline {
             }
         }
 
-
-        // =========================================================
-        // 6. TRIVY FILESYSTEM SCAN
-        // =========================================================
         stage('Trivy Filesystem Scan') {
             steps {
-
-                echo 'Scanning project files with Trivy...'
+                echo 'Running Trivy filesystem security scan...'
 
                 sh '''
                     trivy fs \
@@ -126,20 +92,13 @@ pipeline {
             }
         }
 
-
-        // =========================================================
-        // 7. SONARQUBE ANALYSIS
-        // =========================================================
         stage('SonarQube Analysis') {
             steps {
-
                 echo 'Running SonarQube analysis...'
 
                 withSonarQubeEnv('SonarQube') {
-
                     sh '''
-                        ./mvnw \
-                            org.sonarsource.scanner.maven:sonar-maven-plugin:sonar \
+                        ./mvnw org.sonarsource.scanner.maven:sonar-maven-plugin:sonar \
                             -Dsonar.projectKey=java-task-manager \
                             -Dsonar.projectName=java-task-manager
                     '''
@@ -147,35 +106,19 @@ pipeline {
             }
         }
 
-
-        // =========================================================
-        // 8. SONARQUBE QUALITY GATE
-        // =========================================================
         stage('SonarQube Quality Gate') {
             steps {
-
                 echo 'Waiting for SonarQube Quality Gate...'
 
-                timeout(
-                    time: 5,
-                    unit: 'MINUTES'
-                ) {
-
-                    waitForQualityGate(
-                        abortPipeline: true
-                    )
+                timeout(time: 5, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
                 }
             }
         }
 
-
-        // =========================================================
-        // 9. PACKAGE
-        // =========================================================
         stage('Package') {
             steps {
-
-                echo 'Packaging Spring Boot application...'
+                echo 'Creating application JAR...'
 
                 sh '''
                     ./mvnw package -DskipTests
@@ -183,14 +126,10 @@ pipeline {
             }
         }
 
-
-        // =========================================================
-        // 10. TEST NEXUS AUTHENTICATION
-        // =========================================================
         stage('Test Nexus Authentication') {
             steps {
 
-                echo 'Testing Jenkins -> Nexus authentication...'
+                echo 'Testing Nexus authentication...'
 
                 withCredentials([
                     usernamePassword(
@@ -201,33 +140,28 @@ pipeline {
                 ]) {
 
                     sh '''
-                        HTTP_CODE=$(curl -s \
-                            -o /dev/null \
+                        HTTP_CODE=$(curl -s -o /dev/null \
                             -w "%{http_code}" \
                             -u "${NEXUS_USERNAME}:${NEXUS_PASSWORD}" \
                             "${NEXUS_URL}/service/rest/v1/status")
 
-                        echo "Nexus authentication HTTP status: ${HTTP_CODE}"
+                        echo "Nexus HTTP status: ${HTTP_CODE}"
 
                         if [ "$HTTP_CODE" != "200" ]; then
-                            echo "Nexus authentication failed."
+                            echo "Nexus authentication failed!"
                             exit 1
                         fi
 
-                        echo "Nexus authentication successful."
+                        echo "NEXUS AUTHENTICATION SUCCESSFUL"
                     '''
                 }
             }
         }
 
-
-        // =========================================================
-        // 11. PUBLISH JAR TO NEXUS
-        // =========================================================
         stage('Publish to Nexus') {
             steps {
 
-                echo 'Publishing Maven artifact to Nexus...'
+                echo 'Publishing JAR to Nexus...'
 
                 withCredentials([
                     usernamePassword(
@@ -238,42 +172,26 @@ pipeline {
                 ]) {
 
                     sh '''
-                        set -e
-
-                        echo "Preparing Maven repository path..."
-
                         GROUP_PATH=$(echo "${GROUP_ID}" | tr '.' '/')
 
                         ARTIFACT_FILE="target/${ARTIFACT_ID}-${APP_VERSION}.jar"
 
                         ARTIFACT_URL="${NEXUS_URL}/repository/${NEXUS_REPOSITORY}/${GROUP_PATH}/${ARTIFACT_ID}/${APP_VERSION}/${ARTIFACT_ID}-${APP_VERSION}.jar"
 
-                        echo "Artifact:"
-                        echo "${ARTIFACT_FILE}"
-
-                        echo "Repository path:"
-                        echo "${GROUP_PATH}/${ARTIFACT_ID}/${APP_VERSION}/"
-
-                        echo "Uploading JAR to Nexus..."
+                        echo "Uploading artifact to Nexus..."
+                        echo "Artifact: ${ARTIFACT_FILE}"
 
                         curl -f \
                             -u "${NEXUS_USERNAME}:${NEXUS_PASSWORD}" \
                             --upload-file "${ARTIFACT_FILE}" \
                             "${ARTIFACT_URL}"
 
-                        echo ""
-                        echo "======================================"
-                        echo "NEXUS JAR UPLOAD SUCCESSFUL"
-                        echo "======================================"
+                        echo "JAR successfully uploaded to Nexus!"
                     '''
                 }
             }
         }
 
-
-        // =========================================================
-        // 12. DOCKER BUILD
-        // =========================================================
         stage('Docker Build') {
             steps {
 
@@ -281,65 +199,82 @@ pipeline {
 
                 sh '''
                     docker build \
-                        -t ${APP_NAME}:build-${BUILD_NUMBER} .
+                        -t "${DOCKER_IMAGE}" \
+                        .
                 '''
+
+                echo 'Docker image built successfully.'
             }
         }
 
-
-        // =========================================================
-        // 13. TRIVY DOCKER IMAGE SCAN
-        // =========================================================
         stage('Trivy Image Scan') {
             steps {
 
-                echo 'Scanning Docker image for vulnerabilities...'
+                echo 'Scanning Docker image with Trivy...'
 
                 sh '''
                     trivy image \
                         --severity HIGH,CRITICAL \
                         --exit-code 0 \
-                        ${APP_NAME}:build-${BUILD_NUMBER}
+                        "${DOCKER_IMAGE}"
                 '''
+            }
+        }
+
+        stage('Push Docker Image') {
+            steps {
+
+                echo 'Logging in to Docker Hub and pushing image...'
+
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'dockerhub-credentials',
+                        usernameVariable: 'DOCKER_USERNAME',
+                        passwordVariable: 'DOCKER_PASSWORD'
+                    )
+                ]) {
+
+                    sh '''
+                        echo "${DOCKER_PASSWORD}" | \
+                            docker login \
+                            -u "${DOCKER_USERNAME}" \
+                            --password-stdin
+
+                        echo "Pushing Docker image..."
+
+                        docker push "${DOCKER_IMAGE}"
+
+                        echo "Docker image pushed successfully!"
+
+                        docker logout
+                    '''
+                }
             }
         }
     }
 
-
-    // =============================================================
-    // POST ACTIONS
-    // =============================================================
     post {
 
         always {
-
-            echo 'Cleaning temporary Docker image...'
+            echo 'Pipeline completed.'
 
             sh '''
-                docker image rm \
-                    ${APP_NAME}:build-${BUILD_NUMBER} \
-                    2>/dev/null || true
+                docker image rm "${DOCKER_IMAGE}" || true
             '''
         }
-
 
         success {
-
-            echo '''
-            ======================================
-                 PIPELINE SUCCESSFUL
-            ======================================
-            '''
+            echo '=========================================='
+            echo 'PIPELINE SUCCESSFUL'
+            echo 'Docker image pushed to Docker Hub'
+            echo '=========================================='
         }
 
-
         failure {
-
-            echo '''
-            ======================================
-                 PIPELINE FAILED
-            ======================================
-            '''
+            echo '=========================================='
+            echo 'PIPELINE FAILED'
+            echo 'Check the Jenkins console output'
+            echo '=========================================='
         }
     }
 }

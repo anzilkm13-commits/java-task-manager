@@ -4,6 +4,10 @@ pipeline {
     environment {
         APP_NAME = 'java-task-manager'
         APP_PORT = '8081'
+
+        // Nexus
+        NEXUS_URL = 'http://172.31.13.19:8081'
+        NEXUS_REPOSITORY = 'maven-snapshots'
     }
 
     stages {
@@ -109,6 +113,35 @@ pipeline {
                 sh '''
                     ls -lh target/*.jar
                 '''
+            }
+        }
+
+        stage('Publish to Nexus') {
+            steps {
+                echo 'Uploading JAR to Nexus Repository...'
+
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'nexus-credentials',
+                        usernameVariable: 'NEXUS_USERNAME',
+                        passwordVariable: 'NEXUS_PASSWORD'
+                    )
+                ]) {
+
+                    sh '''
+                        JAR_FILE=$(find target -maxdepth 1 -name "*.jar" \
+                            ! -name "*-sources.jar" \
+                            ! -name "*-javadoc.jar" \
+                            | head -n 1)
+
+                        echo "JAR file: $JAR_FILE"
+
+                        curl -f \
+                            -u "$NEXUS_USERNAME:$NEXUS_PASSWORD" \
+                            --upload-file "$JAR_FILE" \
+                            "${NEXUS_URL}/repository/${NEXUS_REPOSITORY}/$(basename "$JAR_FILE")"
+                    '''
+                }
             }
         }
 

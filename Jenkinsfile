@@ -54,6 +54,29 @@ pipeline {
             }
         }
 
+        stage('Trivy Filesystem Scan') {
+            steps {
+                sh '''
+                    trivy fs \
+                        --severity HIGH,CRITICAL \
+                        --exit-code 0 \
+                        .
+                '''
+            }
+        }
+
+        stage('SonarQube Analysis') {
+            steps {
+                withSonarQubeEnv('SonarQube') {
+                    sh '''
+                        ./mvnw sonar:sonar \
+                            -Dsonar.projectKey=java-task-manager \
+                            -Dsonar.projectName=java-task-manager
+                    '''
+                }
+            }
+        }
+
         stage('Package') {
             steps {
                 sh './mvnw package -DskipTests'
@@ -74,6 +97,7 @@ pipeline {
                 sh '''
                     trivy image \
                         --severity HIGH,CRITICAL \
+                        --exit-code 0 \
                         ${APP_NAME}:build-${BUILD_NUMBER}
                 '''
             }
@@ -83,7 +107,9 @@ pipeline {
     post {
         always {
             sh '''
-                docker image rm ${APP_NAME}:build-${BUILD_NUMBER} 2>/dev/null || true
+                docker image rm \
+                    ${APP_NAME}:build-${BUILD_NUMBER} \
+                    2>/dev/null || true
             '''
         }
 

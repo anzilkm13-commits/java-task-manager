@@ -1,73 +1,111 @@
 pipeline {
+
     agent any
 
     environment {
         APP_NAME = 'java-task-manager'
         APP_PORT = '8081'
 
-        // Nexus
         NEXUS_URL = 'http://172.31.13.19:8081'
         NEXUS_REPOSITORY = 'maven-snapshots'
     }
 
     stages {
 
+        // =========================================================
+        // 1. CHECKOUT
+        // =========================================================
         stage('Checkout') {
             steps {
                 echo 'Checking out source code...'
-
                 checkout scm
             }
         }
 
+
+        // =========================================================
+        // 2. VERIFY TOOLS
+        // =========================================================
         stage('Verify Tools') {
             steps {
                 sh '''
-                    echo "===== JAVA ====="
+                    echo "======================================"
+                    echo "JAVA VERSION"
+                    echo "======================================"
                     java --version
 
-                    echo "===== MAVEN ====="
+                    echo "======================================"
+                    echo "MAVEN VERSION"
+                    echo "======================================"
                     ./mvnw --version
 
-                    echo "===== GIT ====="
+                    echo "======================================"
+                    echo "GIT VERSION"
+                    echo "======================================"
                     git --version
 
-                    echo "===== DOCKER ====="
+                    echo "======================================"
+                    echo "DOCKER VERSION"
+                    echo "======================================"
                     docker --version
 
-                    echo "===== TRIVY ====="
+                    echo "======================================"
+                    echo "TRIVY VERSION"
+                    echo "======================================"
                     trivy --version
                 '''
             }
         }
 
+
+        // =========================================================
+        // 3. CLEAN
+        // =========================================================
         stage('Clean') {
             steps {
-                echo 'Cleaning project...'
+                echo 'Cleaning previous Maven build...'
 
-                sh './mvnw clean'
+                sh '''
+                    ./mvnw clean
+                '''
             }
         }
 
+
+        // =========================================================
+        // 4. COMPILE
+        // =========================================================
         stage('Compile') {
             steps {
                 echo 'Compiling Java application...'
 
-                sh './mvnw compile'
+                sh '''
+                    ./mvnw compile
+                '''
             }
         }
 
+
+        // =========================================================
+        // 5. TEST
+        // =========================================================
         stage('Test') {
             steps {
                 echo 'Running unit tests...'
 
-                sh './mvnw test'
+                sh '''
+                    ./mvnw test
+                '''
             }
         }
 
+
+        // =========================================================
+        // 6. TRIVY FILESYSTEM SCAN
+        // =========================================================
         stage('Trivy Filesystem Scan') {
             steps {
-                echo 'Scanning project files for vulnerabilities...'
+                echo 'Scanning source code and project files with Trivy...'
 
                 sh '''
                     trivy fs \
@@ -78,13 +116,19 @@ pipeline {
             }
         }
 
+
+        // =========================================================
+        // 7. SONARQUBE ANALYSIS
+        // =========================================================
         stage('SonarQube Analysis') {
             steps {
                 echo 'Running SonarQube code quality analysis...'
 
                 withSonarQubeEnv('SonarQube') {
+
                     sh '''
-                        ./mvnw org.sonarsource.scanner.maven:sonar-maven-plugin:sonar \
+                        ./mvnw \
+                            org.sonarsource.scanner.maven:sonar-maven-plugin:sonar \
                             -Dsonar.projectKey=java-task-manager \
                             -Dsonar.projectName=java-task-manager
                     '''
@@ -92,32 +136,49 @@ pipeline {
             }
         }
 
+
+        // =========================================================
+        // 8. SONARQUBE QUALITY GATE
+        // =========================================================
         stage('SonarQube Quality Gate') {
             steps {
+
                 echo 'Waiting for SonarQube Quality Gate...'
 
-                timeout(time: 5, unit: 'MINUTES') {
-                    waitForQualityGate abortPipeline: true
+                timeout(
+                    time: 5,
+                    unit: 'MINUTES'
+                ) {
+
+                    waitForQualityGate(
+                        abortPipeline: true
+                    )
                 }
             }
         }
 
+
+        // =========================================================
+        // 9. PACKAGE
+        // =========================================================
         stage('Package') {
             steps {
                 echo 'Packaging Spring Boot application...'
 
-                sh './mvnw package -DskipTests'
-
-                echo 'Generated JAR files:'
-
                 sh '''
-                    ls -lh target/*.jar
+                    ./mvnw package -DskipTests
                 '''
             }
         }
 
+
+        // =========================================================
+        // 10. PUBLISH JAR TO NEXUS
+        // =========================================================
         stage('Publish to Nexus') {
+
             steps {
+
                 echo 'Uploading JAR to Nexus Repository...'
 
                 withCredentials([
@@ -129,42 +190,64 @@ pipeline {
                 ]) {
 
                     sh '''
-                        JAR_FILE=$(find target -maxdepth 1 -name "*.jar" \
-                            ! -name "*-sources.jar" \
-                            ! -name "*-javadoc.jar" \
-                            | head -n 1)
+                        echo "Creating temporary Maven settings..."
 
-                        echo "JAR file: $JAR_FILE"
+                        cat > nexus-settings.xml <<EOF
+<settings>
+    <servers>
+        <server>
+            <id>nexus</id>
+            <username>${NEXUS_USERNAME}</username>
+            <password>${NEXUS_PASSWORD}</password>
+        </server>
+    </servers>
+</settings>
+EOF
 
-                        curl -f \
-                            -u "$NEXUS_USERNAME:$NEXUS_PASSWORD" \
-                            --upload-file "$JAR_FILE" \
-                            "${NEXUS_URL}/repository/${NEXUS_REPOSITORY}/$(basename "$JAR_FILE")"
+                        echo "Uploading artifact to Nexus..."
+
+                        ./mvnw deploy:deploy-file \
+                            -DgroupId=com.example \
+                            -DartifactId=spring-boot-todo-applicationx \
+                            -Dversion=0.0.1-SNAPSHOT \
+                            -Dpackaging=jar \
+                            -Dfile=target/spring-boot-todo-applicationx-0.0.1-SNAPSHOT.jar \
+                            -DrepositoryId=nexus \
+                            -Durl=${NEXUS_URL}/repository/${NEXUS_REPOSITORY}/ \
+                            -Dsettings=nexus-settings.xml
+
+                        echo "Removing temporary Maven settings..."
+
+                        rm -f nexus-settings.xml
                     '''
                 }
             }
         }
 
+
+        // =========================================================
+        // 11. DOCKER BUILD
+        // =========================================================
         stage('Docker Build') {
             steps {
+
                 echo 'Building Docker image...'
 
                 sh '''
                     docker build \
                         -t ${APP_NAME}:build-${BUILD_NUMBER} .
                 '''
-
-                echo 'Docker image created:'
-
-                sh '''
-                    docker images ${APP_NAME}
-                '''
             }
         }
 
+
+        // =========================================================
+        // 12. TRIVY DOCKER IMAGE SCAN
+        // =========================================================
         stage('Trivy Image Scan') {
             steps {
-                echo 'Scanning Docker image for vulnerabilities...'
+
+                echo 'Scanning Docker image for HIGH and CRITICAL vulnerabilities...'
 
                 sh '''
                     trivy image \
@@ -176,9 +259,14 @@ pipeline {
         }
     }
 
+
+    // =============================================================
+    // POST ACTIONS
+    // =============================================================
     post {
 
         always {
+
             echo 'Cleaning temporary Docker image...'
 
             sh '''
@@ -188,16 +276,24 @@ pipeline {
             '''
         }
 
+
         success {
-            echo '======================================'
-            echo 'PIPELINE SUCCESSFUL'
-            echo '======================================'
+
+            echo '''
+            ======================================
+                 PIPELINE SUCCESSFUL
+            ======================================
+            '''
         }
 
+
         failure {
-            echo '======================================'
-            echo 'PIPELINE FAILED'
-            echo '======================================'
+
+            echo '''
+            ======================================
+                 PIPELINE FAILED
+            ======================================
+            '''
         }
     }
 }

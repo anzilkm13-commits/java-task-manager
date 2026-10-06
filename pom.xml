@@ -5,6 +5,7 @@
 
     <modelVersion>4.0.0</modelVersion>
 
+    <!-- Spring Boot Parent -->
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
@@ -12,6 +13,7 @@
         <relativePath/>
     </parent>
 
+    <!-- Project Information -->
     <groupId>com.example</groupId>
     <artifactId>spring-boot-todo-applicationx</artifactId>
     <version>0.0.1-SNAPSHOT</version>
@@ -19,10 +21,12 @@
     <name>spring-boot-todo-applicationx</name>
     <description>Spring Boot Todo Application</description>
 
+    <!-- Java Version -->
     <properties>
         <java.version>17</java.version>
     </properties>
 
+    <!-- Dependencies -->
     <dependencies>
 
         <!-- Spring Web -->
@@ -56,13 +60,20 @@
             <scope>runtime</scope>
         </dependency>
 
+        <!-- Lombok -->
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <optional>true</optional>
+        </dependency>
+
         <!-- Spring Boot Actuator -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>
 
-        <!-- Prometheus / Micrometer -->
+        <!-- Micrometer Prometheus -->
         <dependency>
             <groupId>io.micrometer</groupId>
             <artifactId>micrometer-registry-prometheus</artifactId>
@@ -77,9 +88,11 @@
 
     </dependencies>
 
+    <!-- Build Configuration -->
     <build>
         <plugins>
 
+            <!-- Spring Boot Maven Plugin -->
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>

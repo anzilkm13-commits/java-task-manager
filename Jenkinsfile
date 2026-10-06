@@ -3,20 +3,17 @@ pipeline {
     agent any
 
     environment {
-        APP_NAME = 'java-task-manager'
-        APP_PORT = '8081'
+        DOCKER_IMAGE = 'anzilkm/java-task-manager'
+        IMAGE_TAG = "${BUILD_NUMBER}"
 
-        // Nexus
         NEXUS_URL = 'http://172.31.13.19:8081'
         NEXUS_REPOSITORY = 'maven-snapshots'
 
-        // Maven coordinates
         GROUP_ID = 'com.example'
         ARTIFACT_ID = 'spring-boot-todo-applicationx'
         APP_VERSION = '0.0.1-SNAPSHOT'
 
-        // Docker Hub
-        DOCKER_IMAGE = 'anzilkm/java-task-manager:1.0'
+        KUBECONFIG = '/var/lib/jenkins/.kube/config'
     }
 
     stages {
@@ -31,58 +28,44 @@ pipeline {
         stage('Verify Tools') {
             steps {
                 sh '''
-                    echo "===== Java ====="
+                    echo "Java:"
                     java -version
 
-                    echo "===== Maven ====="
+                    echo "Maven:"
                     ./mvnw -version
 
-                    echo "===== Git ====="
-                    git --version
-
-                    echo "===== Docker ====="
+                    echo "Docker:"
                     docker --version
 
-                    echo "===== Trivy ====="
+                    echo "Trivy:"
                     trivy --version
+
+                    echo "Kubectl:"
+                    kubectl version --client
                 '''
             }
         }
 
         stage('Clean') {
             steps {
-                echo 'Cleaning previous build files...'
-
-                sh '''
-                    ./mvnw clean
-                '''
+                sh './mvnw clean'
             }
         }
 
         stage('Compile') {
             steps {
-                echo 'Compiling application...'
-
-                sh '''
-                    ./mvnw compile
-                '''
+                sh './mvnw compile'
             }
         }
 
         stage('Test') {
             steps {
-                echo 'Running unit tests...'
-
-                sh '''
-                    ./mvnw test
-                '''
+                sh './mvnw test'
             }
         }
 
         stage('Trivy Filesystem Scan') {
             steps {
-                echo 'Running Trivy filesystem security scan...'
-
                 sh '''
                     trivy fs \
                         --severity HIGH,CRITICAL \
@@ -94,8 +77,6 @@ pipeline {
 
         stage('SonarQube Analysis') {
             steps {
-                echo 'Running SonarQube analysis...'
-
                 withSonarQubeEnv('SonarQube') {
                     sh '''
                         ./mvnw org.sonarsource.scanner.maven:sonar-maven-plugin:sonar \
@@ -118,18 +99,12 @@ pipeline {
 
         stage('Package') {
             steps {
-                echo 'Creating application JAR...'
-
-                sh '''
-                    ./mvnw package -DskipTests
-                '''
+                sh './mvnw package -DskipTests'
             }
         }
 
-        stage('Test Nexus Authentication') {
+        stage('Publish Artifact to Nexus') {
             steps {
-
-                echo 'Testing Nexus authentication...'
 
                 withCredentials([
                     usernamePassword(
@@ -140,38 +115,8 @@ pipeline {
                 ]) {
 
                     sh '''
-                        HTTP_CODE=$(curl -s -o /dev/null \
-                            -w "%{http_code}" \
-                            -u "${NEXUS_USERNAME}:${NEXUS_PASSWORD}" \
-                            "${NEXUS_URL}/service/rest/v1/status")
+                        set -e
 
-                        echo "Nexus HTTP status: ${HTTP_CODE}"
-
-                        if [ "$HTTP_CODE" != "200" ]; then
-                            echo "Nexus authentication failed!"
-                            exit 1
-                        fi
-
-                        echo "NEXUS AUTHENTICATION SUCCESSFUL"
-                    '''
-                }
-            }
-        }
-
-        stage('Publish to Nexus') {
-            steps {
-
-                echo 'Publishing JAR to Nexus...'
-
-                withCredentials([
-                    usernamePassword(
-                        credentialsId: 'nexus-credentials',
-                        usernameVariable: 'NEXUS_USERNAME',
-                        passwordVariable: 'NEXUS_PASSWORD'
-                    )
-                ]) {
-
-                    sh '''
                         GROUP_PATH=$(echo "${GROUP_ID}" | tr '.' '/')
 
                         ARTIFACT_FILE="target/${ARTIFACT_ID}-${APP_VERSION}.jar"
@@ -179,14 +124,13 @@ pipeline {
                         ARTIFACT_URL="${NEXUS_URL}/repository/${NEXUS_REPOSITORY}/${GROUP_PATH}/${ARTIFACT_ID}/${APP_VERSION}/${ARTIFACT_ID}-${APP_VERSION}.jar"
 
                         echo "Uploading artifact to Nexus..."
-                        echo "Artifact: ${ARTIFACT_FILE}"
 
                         curl -f \
                             -u "${NEXUS_USERNAME}:${NEXUS_PASSWORD}" \
                             --upload-file "${ARTIFACT_FILE}" \
                             "${ARTIFACT_URL}"
 
-                        echo "JAR successfully uploaded to Nexus!"
+                        echo "Nexus upload successful."
                     '''
                 }
             }
@@ -194,37 +138,34 @@ pipeline {
 
         stage('Docker Build') {
             steps {
-
-                echo 'Building Docker image...'
-
                 sh '''
-                    docker build \
-                        -t "${DOCKER_IMAGE}" \
-                        .
-                '''
+                    echo "Building Docker image..."
 
-                echo 'Docker image built successfully.'
+                    docker build \
+                        -t "${DOCKER_IMAGE}:${IMAGE_TAG}" \
+                        .
+
+                    echo "Docker image created:"
+                    docker images "${DOCKER_IMAGE}"
+                '''
             }
         }
 
         stage('Trivy Image Scan') {
             steps {
-
-                echo 'Scanning Docker image with Trivy...'
-
                 sh '''
+                    echo "Scanning Docker image..."
+
                     trivy image \
                         --severity HIGH,CRITICAL \
                         --exit-code 0 \
-                        "${DOCKER_IMAGE}"
+                        "${DOCKER_IMAGE}:${IMAGE_TAG}"
                 '''
             }
         }
 
         stage('Push Docker Image') {
             steps {
-
-                echo 'Logging in to Docker Hub and pushing image...'
 
                 withCredentials([
                     usernamePassword(
@@ -240,41 +181,87 @@ pipeline {
                             -u "${DOCKER_USERNAME}" \
                             --password-stdin
 
-                        echo "Pushing Docker image..."
+                        echo "Pushing image:"
+                        echo "${DOCKER_IMAGE}:${IMAGE_TAG}"
 
-                        docker push "${DOCKER_IMAGE}"
-
-                        echo "Docker image pushed successfully!"
+                        docker push "${DOCKER_IMAGE}:${IMAGE_TAG}"
 
                         docker logout
                     '''
                 }
             }
         }
+
+        stage('Deploy to Kubernetes') {
+            steps {
+                sh '''
+                    echo "Deploying application to Kubernetes..."
+
+                    echo "Kubernetes cluster:"
+                    kubectl --kubeconfig="${KUBECONFIG}" get nodes
+
+                    echo "Updating deployment image..."
+
+                    kubectl \
+                        --kubeconfig="${KUBECONFIG}" \
+                        set image deployment/java-task-manager \
+                        java-task-manager="${DOCKER_IMAGE}:${IMAGE_TAG}"
+
+                    echo "Waiting for rollout..."
+
+                    kubectl \
+                        --kubeconfig="${KUBECONFIG}" \
+                        rollout status deployment/java-task-manager \
+                        --timeout=180s
+
+                    echo "Deployment successful."
+
+                    echo "Current deployment:"
+                    kubectl \
+                        --kubeconfig="${KUBECONFIG}" \
+                        get deployment java-task-manager
+
+                    echo "Current pods:"
+                    kubectl \
+                        --kubeconfig="${KUBECONFIG}" \
+                        get pods -o wide
+                '''
+            }
+        }
     }
 
     post {
 
-        always {
-            echo 'Pipeline completed.'
-
-            sh '''
-                docker image rm "${DOCKER_IMAGE}" || true
-            '''
-        }
-
         success {
-            echo '=========================================='
-            echo 'PIPELINE SUCCESSFUL'
-            echo 'Docker image pushed to Docker Hub'
-            echo '=========================================='
+            echo """
+            ==========================================
+            PIPELINE SUCCESSFUL
+            ==========================================
+
+            Docker Image:
+            ${DOCKER_IMAGE}:${IMAGE_TAG}
+
+            Kubernetes Deployment:
+            java-task-manager
+
+            ==========================================
+            """
         }
 
         failure {
-            echo '=========================================='
-            echo 'PIPELINE FAILED'
-            echo 'Check the Jenkins console output'
-            echo '=========================================='
+            echo """
+            ==========================================
+            PIPELINE FAILED
+            ==========================================
+
+            Check the failed stage in the Jenkins console.
+
+            ==========================================
+            """
+        }
+
+        always {
+            echo "Pipeline execution completed."
         }
     }
 }

@@ -11,6 +11,7 @@ pipeline {
         stage('Checkout') {
             steps {
                 echo 'Checking out source code...'
+
                 checkout scm
             }
         }
@@ -46,7 +47,7 @@ pipeline {
 
         stage('Compile') {
             steps {
-                echo 'Compiling application...'
+                echo 'Compiling Java application...'
 
                 sh './mvnw compile'
             }
@@ -83,6 +84,16 @@ pipeline {
                             -Dsonar.projectKey=java-task-manager \
                             -Dsonar.projectName=java-task-manager
                     '''
+                }
+            }
+        }
+
+        stage('SonarQube Quality Gate') {
+            steps {
+                echo 'Waiting for SonarQube Quality Gate...'
+
+                timeout(time: 5, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
                 }
             }
         }
